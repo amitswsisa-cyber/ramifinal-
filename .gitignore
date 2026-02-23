@@ -1,0 +1,31 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Temp/output files
+appraisal-automation/_temp/
+_temp/
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Large DOCX test files (optional — keep templates only if needed)
+# *.docx
+
+# Loki/Claude config
+.loki/
+.claude/
