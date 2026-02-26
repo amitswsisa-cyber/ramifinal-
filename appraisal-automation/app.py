@@ -304,12 +304,19 @@ with tab2:
     st.markdown("**בחר מנוע בינה מלאכותית:**")
     api_provider_label = st.radio(
         "מנוע AI",
-        options=["Claude (Anthropic)", "GPT-4o/o3-mini (OpenAI)", "Gemini 2.5 Flash (Google)"],
+        options=[
+            "ביקורת רב-סוכנית (מהיר ומקיף) 🚀", 
+            "Claude (Anthropic)", 
+            "GPT-4o/o3-mini (OpenAI)", 
+            "Gemini 2.0 Flash (Google)"
+        ],
         horizontal=True,
         key="api_provider_radio",
         label_visibility="collapsed",
     )
-    if "Anthropic" in api_provider_label:
+    if "רב-סוכנית" in api_provider_label:
+        api_provider = "multi"
+    elif "Anthropic" in api_provider_label:
         api_provider = "anthropic"
     elif "OpenAI" in api_provider_label:
         api_provider = "openai"
@@ -317,7 +324,13 @@ with tab2:
         api_provider = "gemini"
 
     # Validate the key for the selected provider
-    if api_provider == "anthropic":
+    if api_provider == "multi":
+        if not OPENAI_API_KEY or not GEMINI_API_KEY:
+            st.warning("⚠️ דרושים מפתחות API של OpenAI ו-Gemini עבור ביקורת רב-סוכנית.")
+            api_key = None
+        else:
+            api_key = "multi" # Dummy value to enable button
+    elif api_provider == "anthropic":
         api_key = ANTHROPIC_API_KEY
         if not api_key:
             st.warning(

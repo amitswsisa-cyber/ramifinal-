@@ -341,53 +341,52 @@ def run_stage2(file_obj, api_provider: str = "anthropic") -> tuple[str, str]:
     return result
 
 
+from section_mapper import SectionMapper
+from agents.reviewer import MultiAgentReviewer
+
 def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
     """
     Execute Stage 2 pipeline with progress updates.
-
-    Yields progress strings, then finally yields (output_path, summary) tuple.
-
-    Args:
-        file_obj:     Streamlit UploadedFile or file-like object with completed DOCX.
-        api_provider: "anthropic" (default) or "openai"
-
-    Yields:
-        str: Progress message (Hebrew)
-        tuple[str, str]: Final (output_docx_path, summary_text)
+    Supports both legacy single-agent and new multi-agent review.
     """
-    # Validate API key for selected provider
+    # ... (API key validation logic preserved) ...
     if api_provider == "openai":
-        if not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is not set. Add it to the .env file.")
-        if not _OPENAI_AVAILABLE:
-            raise ImportError("openai package not installed. Run: pip install openai>=1.0.0")
+        if not OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY is not set.")
     elif api_provider == "gemini":
-        if not GEMINI_API_KEY:
-            raise ValueError("GEMINI_API_KEY is not set. Add it to the .env file.")
-        if not _GEMINI_AVAILABLE:
-            raise ImportError("google-genai package not installed. Run: pip install -U google-genai")
+        if not GEMINI_API_KEY: raise ValueError("GEMINI_API_KEY is not set.")
+    elif api_provider == "multi":
+        if not OPENAI_API_KEY or not GEMINI_API_KEY:
+            raise ValueError("Multi-agent review requires both OPENAI_API_KEY and GEMINI_API_KEY.")
     else:
-        if not ANTHROPIC_API_KEY:
-            raise ValueError("ANTHROPIC_API_KEY is not set. Add it to the .env file.")
+        if not ANTHROPIC_API_KEY: raise ValueError("ANTHROPIC_API_KEY is not set.")
 
-    # ── Step 1: Extract text ──────────────────────────────────────────────────
-    yield "📄 מחלץ טקסט מהמסמך..."
+    # ── Step 1: Extract text & Map Sections ──────────────────────────────────
+    yield "📄 מנתח מבנה מסמך וממפה סעיפים..."
 
     original_name = _get_original_name(file_obj)
-    with tempfile.NamedTemporaryFile(
-        dir=TEMP_DIR, suffix=".docx", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(dir=TEMP_DIR, suffix=".docx", delete=False) as tmp:
         tmp.write(_read_bytes(file_obj))
         src_path = tmp.name
 
     unpack_dir = src_path.replace(".docx", "_s2_unpacked")
     docx_unpack(src_path, unpack_dir)
 
+    # Build section map
+    mapper = SectionMapper(unpack_dir)
+    mapper.load()
+    section_map = mapper.build_map()
+
     paragraphs = get_paragraph_texts(unpack_dir)
     prompt_text = _format_paragraphs_for_prompt(paragraphs)
 
-    # -- Step 2: Call AI API --------------------------------------------------
-    if api_provider == "openai":
+    # -- Step 2: Call AI API (Single or Multi) --------------------------------
+    debug_info = ""
+    if api_provider == "multi":
+        yield "🤖 מריץ ביקורת רב-סוכנית (ניסוח, כתיב ועקביות)..."
+        reviewer = MultiAgentReviewer()
+        findings = reviewer.run_review(prompt_text)
+        debug_info = reviewer.get_debug_summary()
+    elif api_provider == "openai":
         yield "🤖 שולח לביקורת GPT-4o..."
         findings = _call_openai_api(prompt_text)
     elif api_provider == "gemini":
@@ -397,6 +396,12 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
         yield "🤖 שולח לביקורת Claude..."
         findings = _call_claude_api(prompt_text)
 
+    # Attach section labels to findings for better reporting
+    for f in findings:
+        idx = f.get("paragraph_index")
+        if idx is not None and idx in section_map:
+            f["section_label"] = section_map[idx]
+
     # ── Step 3: Inject comments ───────────────────────────────────────────────
     yield "💬 מזריק הערות למסמך..."
 
@@ -404,27 +409,21 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
 
     # ── Build output summary ──────────────────────────────────────────────────
     summary = build_summary(findings)
+    if debug_info:
+        summary += "\n\n" + debug_info
 
     # ── Repack ────────────────────────────────────────────────────────────────
-    # Stage 2 only modifies comments.xml and document.xml — validate just those
-    # for faster repacking (skips ~15 other XML files)
     stem        = _stem(original_name)
     output_name = stem + STAGE2_SUFFIX + ".docx"
     output_path = os.path.join(TEMP_DIR, output_name)
-    _STAGE2_MODIFIED_FILES = [
-        "word/document.xml",
-        "word/comments.xml",
-    ]
+    _STAGE2_MODIFIED_FILES = ["word/document.xml", "word/comments.xml"]
     docx_pack_safe(unpack_dir, output_path, validate_files=_STAGE2_MODIFIED_FILES)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
     shutil.rmtree(unpack_dir, ignore_errors=True)
     os.unlink(src_path)
 
-    # ── Step 4: Done ──────────────────────────────────────────────────────────
     yield "✅ הביקורת הושלמה!"
-
-    # Final result
     yield (output_path, summary)
 
 

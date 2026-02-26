@@ -41,11 +41,19 @@ except (ImportError, KeyError, FileNotFoundError):
     GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
     APP_PASSWORD      = os.environ.get("APP_PASSWORD", "") # Fallback for local testing
 
-# OpenAI model for Stage 2 review (alternative to Claude)
+# OpenAI models for Stage 2 review
 OPENAI_REVIEW_MODEL = "o3-mini"
-GEMINI_REVIEW_MODEL = "gemini-3-flash-preview"
+GEMINI_REVIEW_MODEL = "gemini-2.0-flash" # Default for single-agent
 
-# ── Output naming ─────────────────────────────────────────────────────────────
+# Multi-Agent Architecture (Task 4)
+MULTI_AGENT_PHRASING_A = "gpt-4o"
+MULTI_AGENT_PHRASING_B = "gemini-3-flash-preview"
+MULTI_AGENT_SPELLING   = "gemini-2.0-flash"
+MULTI_AGENT_CONSISTENCY = "gemini-2.0-flash"
+
+PHRASING_AB_RATIO = 0.5 # 50/50 test
+
+# -- Output naming -------------------------------------------------------------
 STAGE1_SUFFIX = "_filled"
 STAGE2_SUFFIX = "_reviewed"
 
