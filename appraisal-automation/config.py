@@ -47,7 +47,7 @@ GEMINI_REVIEW_MODEL = "gemini-2.0-flash" # Default for single-agent
 
 # Multi-Agent Architecture (Task 4)
 MULTI_AGENT_PHRASING_A = "gpt-4o"
-MULTI_AGENT_PHRASING_B = "gemini-3-flash-preview"
+MULTI_AGENT_PHRASING_B = "gemini-2.0-flash"
 MULTI_AGENT_SPELLING   = "gemini-2.0-flash"
 MULTI_AGENT_CONSISTENCY = "gemini-2.0-flash"
 

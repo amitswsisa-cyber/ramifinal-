@@ -301,19 +301,30 @@ with tab2:
 
     # from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
 
-    st.markdown("**בחר מנוע בינה מלאכותית:**")
+    # AI Engine Selection UI Improvement
+    st.markdown("### 🤖 בחר מנוע בינה מלאכותית:")
+    
+    # st.radio with captions is available in newer streamlit versions
     api_provider_label = st.radio(
         "מנוע AI",
         options=[
-            "ביקורת רב-סוכנית (מהיר ומקיף) 🚀", 
-            "Claude (Anthropic)", 
-            "GPT-4o/o3-mini (OpenAI)", 
+            "🌐 ביקורת רב-סוכנית (מהיר ומקיף) 🚀", 
+            "Claude 3.5 Sonnet (Anthropic)", 
+            "GPT-4o (OpenAI)", 
             "Gemini 2.0 Flash (Google)"
         ],
+        captions=[
+            "המלצה שלנו: משלבת 3 מודלים במקביל (ניסוח, כתיב ועקביות).",
+            "המנוע היסודי ביותר לביקורת עמוקה.",
+            "מודל הדגל של OpenAI, מצוין לניסוח לוגי.",
+            "המודל המהיר ביותר לבדיקות מהירות."
+        ],
+        index=0,
         horizontal=True,
         key="api_provider_radio",
         label_visibility="collapsed",
     )
+
     if "רב-סוכנית" in api_provider_label:
         api_provider = "multi"
     elif "Anthropic" in api_provider_label:
@@ -324,33 +335,24 @@ with tab2:
         api_provider = "gemini"
 
     # Validate the key for the selected provider
+    api_key = None
     if api_provider == "multi":
         if not OPENAI_API_KEY or not GEMINI_API_KEY:
             st.warning("⚠️ דרושים מפתחות API של OpenAI ו-Gemini עבור ביקורת רב-סוכנית.")
-            api_key = None
         else:
-            api_key = "multi" # Dummy value to enable button
+            api_key = "multi" 
     elif api_provider == "anthropic":
         api_key = ANTHROPIC_API_KEY
         if not api_key:
-            st.warning(
-                "⚠️ מפתח API של Anthropic לא מוגדר. "
-                "הגדר `ANTHROPIC_API_KEY` כמשתנה סביבה לפני הרצת שלב 2."
-            )
+            st.warning("⚠️ מפתח API של Anthropic לא מוגדר.")
     elif api_provider == "openai":
         api_key = OPENAI_API_KEY
         if not api_key:
-            st.warning(
-                "⚠️ מפתח API של OpenAI לא מוגדר. "
-                "הגדר `OPENAI_API_KEY` כמשתנה סביבה לפני הרצת שלב 2."
-            )
+            st.warning("⚠️ מפתח API של OpenAI לא מוגדר.")
     else:
         api_key = GEMINI_API_KEY
         if not api_key:
-            st.warning(
-                "⚠️ מפתח API של Google Gemini לא מוגדר. "
-                "הגדר `GEMINI_API_KEY` כמשתנה סביבה לפני הרצת שלב 2."
-            )
+            st.warning("⚠️ מפתח API של Google Gemini לא מוגדר.")
 
     uploaded_filled = st.file_uploader(
         "📤 העלה DOCX מוכן לביקורת",
