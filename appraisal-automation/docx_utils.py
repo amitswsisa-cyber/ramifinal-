@@ -204,6 +204,101 @@ def get_paragraph_texts(unpacked_dir: str) -> list[str]:
     return texts
 
 
+def get_rich_markdown(unpacked_dir: str) -> str:
+    """
+    Build a rich Markdown representation of the entire DOCX document using python-docx.
+
+    Iterates through every paragraph and table in document order, tracking the
+    real paragraph index that matches the lxml `root.iter(W+'p')` order used by
+    comment.py for injection.  Inserts section-boundary headers from SectionMapper
+    so the AI always knows which section it is reading.
+
+    Returns a single UTF-8 string with lines like:
+        === [סעיף 3 (תיאור הנכס)] ===
+        [14] ## כותרת
+        [15] טקסט רגיל
+        [16] (ריק)
+        [17] (טבלה) | שטח בנוי | 120 מ"ר |
+    """
+    from lxml import etree
+    from docx import Document
+    from section_mapper import SectionMapper
+
+    W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    W    = f"{{{W_NS}}}"
+
+    # ── Build section map ────────────────────────────────────────────────
+    mapper = SectionMapper(unpacked_dir)
+    mapper.load()
+    section_map = mapper.build_map()
+
+    # ── Parse document.xml with lxml to get the canonical paragraph order ─
+    doc_xml_path = os.path.join(unpacked_dir, "word", "document.xml")
+    tree = etree.parse(doc_xml_path)
+    root = tree.getroot()
+
+    all_paras_lxml = list(root.iter(f"{W}p"))
+
+    # Build set of paragraph element ids that live inside table cells
+    table_para_ids: set[int] = set()
+    for tc in root.iter(f"{W}tc"):
+        for p in tc.iter(f"{W}p"):
+            table_para_ids.add(id(p))
+
+    # ── Also open with python-docx to get style names ────────────────────
+    docx_path = os.path.join(unpacked_dir, "word", "document.xml")
+    # python-docx needs the original .docx — but we have the unpacked dir.
+    # We'll get style info from lxml directly instead.
+
+    # Helper: extract style name from lxml paragraph element
+    def _get_style_name(p_el) -> str:
+        pPr = p_el.find(f"{W}pPr")
+        if pPr is not None:
+            pStyle = pPr.find(f"{W}pStyle")
+            if pStyle is not None:
+                return pStyle.get(f"{W}val") or ""
+        return ""
+
+    # Helper: extract text from lxml paragraph element
+    def _get_text(p_el) -> str:
+        parts = [t.text or "" for t in p_el.iter(f"{W}t")]
+        return "".join(parts)
+
+    # ── Build output lines ───────────────────────────────────────────────
+    lines: list[str] = []
+    last_section = None
+
+    for idx, p_el in enumerate(all_paras_lxml):
+        # Insert section header when boundary is crossed
+        section_label = section_map.get(idx)
+        if section_label:
+            # Extract just the section name (strip ", פסקה N" sub-paragraph suffixes)
+            section_base = section_label.split(",")[0].strip()
+            if section_base != last_section:
+                lines.append(f"\n=== [{section_base}] ===\n")
+                last_section = section_base
+
+        text = _get_text(p_el)
+        style = _get_style_name(p_el)
+        is_table = id(p_el) in table_para_ids
+
+        if not text.strip():
+            lines.append(f"[{idx}] (ריק)")
+        elif is_table:
+            # Format as markdown table row
+            lines.append(f"[{idx}] (טבלה) | {text.strip()} |")
+        elif "Heading" in style or style in ("1", "2", "3", "a9"):
+            lines.append(f"[{idx}] ## {text.strip()}")
+        else:
+            lines.append(f"[{idx}] {text.strip()}")
+
+    total = len(all_paras_lxml)
+    non_empty = sum(1 for p in all_paras_lxml if _get_text(p).strip())
+    header = f"להלן המסמך המלא ({total} פסקאות, {non_empty} עם תוכן):\n\n"
+
+    return header + "\n".join(lines)
+
+
 def validate_unpacked_docx(unpacked_dir: str, files_only: list[str] = None) -> list[str]:
     """
     Validate XML files in the unpacked DOCX directory.

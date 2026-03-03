@@ -43,7 +43,9 @@ except (ImportError, KeyError, FileNotFoundError):
 
 # OpenAI models for Stage 2 review
 OPENAI_REVIEW_MODEL = "o3-mini"
+OPENAI_DOCX_REVIEW_MODEL = "gpt-4o"  # Single-call docx upload path
 GEMINI_REVIEW_MODEL = "gemini-2.0-flash" # Default for single-agent
+GEMINI_FULL_REVIEW_MODEL = "gemini-3-flash-preview"  # Rich-text full-doc scan (3 Flash — faster & cheaper than 2.5 Pro)
 
 # Multi-Agent Architecture (Task 4)
 MULTI_AGENT_PHRASING_A = "gpt-4o"

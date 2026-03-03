@@ -13,6 +13,7 @@ sys.path.insert(0, _SCRIPTS_DIR)
 
 from comment import inject_comments_batch
 from config import COMMENT_AUTHOR
+from docx_utils import get_paragraph_texts
 
 
 # ── Category to emoji prefix mapping (Hebrew labels) ─────────────────────────
@@ -50,11 +51,45 @@ def format_comment_text(finding: dict) -> str:
 def inject_all_comments(unpacked_dir: str, findings: list[dict]) -> int:
     """
     Inject all findings as Word comments into the unpacked DOCX.
-    """
-    # Sort by paragraph_index ascending so IDs are logical
-    sorted_findings = sorted(findings, key=lambda f: f.get("paragraph_index", 0))
 
-    # Build batch list
+    Before injecting:
+    1. Deduplicates findings with the same (paragraph_index, category), keeping
+       the one with the highest severity.
+    2. Clamps paragraph_index values that point to empty paragraphs to the
+       nearest non-empty paragraph at or before that index.
+    """
+    if not findings:
+        return 0
+
+    # ── 1. Dedup: keep highest-severity finding per (paragraph_index, category) ──
+    SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
+    best: dict[tuple, dict] = {}
+    for f in findings:
+        key  = (f.get("paragraph_index", 0), f.get("category", ""))
+        rank = SEVERITY_RANK.get(f.get("severity", "low"), 1)
+        if key not in best or rank > SEVERITY_RANK.get(best[key].get("severity", "low"), 1):
+            best[key] = f
+    deduped = list(best.values())
+
+    # ── 2. Clamp to nearest non-empty paragraph ───────────────────────────────
+    paragraphs = get_paragraph_texts(unpacked_dir)
+    non_empty_indices = [i for i, t in enumerate(paragraphs) if t.strip()]
+
+    def _clamp_to_non_empty(idx: int) -> int:
+        if not non_empty_indices:
+            return idx
+        # Clamp to max valid index first
+        idx = min(idx, len(paragraphs) - 1)
+        idx = max(idx, 0)
+        candidates = [i for i in non_empty_indices if i <= idx]
+        return candidates[-1] if candidates else non_empty_indices[0]
+
+    for f in deduped:
+        f["paragraph_index"] = _clamp_to_non_empty(f.get("paragraph_index", 0))
+
+    # ── 3. Sort and inject ────────────────────────────────────────────────────
+    sorted_findings = sorted(deduped, key=lambda f: f.get("paragraph_index", 0))
+
     batch: list[dict] = []
     for cid, finding in enumerate(sorted_findings):
         batch.append({
@@ -63,10 +98,6 @@ def inject_all_comments(unpacked_dir: str, findings: list[dict]) -> int:
             "text":       format_comment_text(finding),
         })
 
-    if not batch:
-        return 0
-
-    # Single-pass injection
     inject_comments_batch(
         unpacked_dir=unpacked_dir,
         comments=batch,
