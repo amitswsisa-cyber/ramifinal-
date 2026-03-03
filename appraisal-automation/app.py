@@ -301,74 +301,16 @@ with tab2:
 
     # from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
 
-    # AI Engine Selection UI Improvement
-    st.markdown("### 🤖 בחר מנוע בינה מלאכותית:")
+    # AI Engine Selection — Simplified to only Gemini 3 Flash
+    st.markdown("### 🤖 מנוע בינה מלאכותית:")
+    st.info("הביקורת תתבצע באמצעות **Gemini 3 Flash** (סריקת מסמך מלא) — המנוע המומלץ והמדויק ביותר.")
     
-    # st.radio with captions is available in newer streamlit versions
-    api_provider_label = st.radio(
-        "מנוע AI",
-        options=[
-            "Gemini 3 Flash סריקת מסמך מלא (טקסט עשיר) — מומלץ",
-            "GPT-4o מסמך מלא",
-            "🌐 ביקורת רב-סוכנית (מהיר ומקיף) 🚀",
-            "Claude 3.5 Sonnet (Anthropic)",
-            "GPT-4o טקסט (OpenAI)",
-            "Gemini 2.0 Flash (Google)"
-        ],
-        captions=[
-            "שולח את כל המסמך כטקסט עשיר ל-Gemini 3 Flash — סריקה מלאה ומעמיקה.",
-            "מעלה את המסמך ישירות ל-GPT-4o — אינדקס פסקאות מדויק.",
-            "משלבת 3 מודלים במקביל (ניסוח, כתיב ועקביות).",
-            "המנוע היסודי ביותר לביקורת עמוקה.",
-            "GPT-4o עם קלט טקסט בלבד.",
-            "המודל המהיר ביותר לבדיקות מהירות."
-        ],
-        index=0,
-        horizontal=True,
-        key="api_provider_radio",
-        label_visibility="collapsed",
-    )
-
-    if "טקסט עשיר" in api_provider_label:
-        api_provider = "gemini_full"
-    elif "GPT-4o מסמך מלא" in api_provider_label:
-        api_provider = "openai_docx"
-    elif "רב-סוכנית" in api_provider_label:
-        api_provider = "multi"
-    elif "Anthropic" in api_provider_label:
-        api_provider = "anthropic"
-    elif "טקסט" in api_provider_label:
-        api_provider = "openai"
-    else:
-        api_provider = "gemini"
+    api_provider = "gemini_full"
 
     # Validate the key for the selected provider
-    api_key = None
-    if api_provider == "gemini_full":
-        api_key = GEMINI_API_KEY
-        if not api_key:
-            st.warning("⚠️ מפתח API של Google Gemini לא מוגדר.")
-    elif api_provider == "openai_docx":
-        api_key = OPENAI_API_KEY
-        if not api_key:
-            st.warning("⚠️ מפתח API של OpenAI לא מוגדר.")
-    elif api_provider == "multi":
-        if not OPENAI_API_KEY or not GEMINI_API_KEY:
-            st.warning("⚠️ דרושים מפתחות API של OpenAI ו-Gemini עבור ביקורת רב-סוכנית.")
-        else:
-            api_key = "multi"
-    elif api_provider == "anthropic":
-        api_key = ANTHROPIC_API_KEY
-        if not api_key:
-            st.warning("⚠️ מפתח API של Anthropic לא מוגדר.")
-    elif api_provider == "openai":
-        api_key = OPENAI_API_KEY
-        if not api_key:
-            st.warning("⚠️ מפתח API של OpenAI לא מוגדר.")
-    else:
-        api_key = GEMINI_API_KEY
-        if not api_key:
-            st.warning("⚠️ מפתח API של Google Gemini לא מוגדר.")
+    api_key = GEMINI_API_KEY
+    if not api_key:
+        st.warning("⚠️ מפתח API של Google Gemini לא מוגדר.")
 
     uploaded_filled = st.file_uploader(
         "📤 העלה DOCX מוכן לביקורת",
