@@ -301,11 +301,28 @@ with tab2:
 
     # from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
 
-    # AI Engine Selection — Simplified to only Gemini 3 Flash
-    st.markdown("### 🤖 מנוע בינה מלאכותית:")
-    st.info("הביקורת תתבצע באמצעות **Gemini 3 Flash** (סריקת מסמך מלא) — המנוע המומלץ והמדויק ביותר.")
-    
-    api_provider = "gemini_full"
+    # AI Engine Selection — review mode radio
+    st.markdown("### 🤖 סוג ביקורת:")
+    review_mode = st.radio(
+        "בחר סוג ביקורת:",
+        options=["🔍 ביקורת מלאה", "🔤 בדיקת כתיב בלבד"],
+        index=0,
+        key="review_mode_selector",
+        label_visibility="collapsed",
+    )
+
+    if review_mode == "🔍 ביקורת מלאה":
+        api_provider = "gemini_full"
+        st.info(
+            "**ביקורת מלאה** — Gemini 3 Flash סורק את כל המסמך: "
+            "עקביות לוגית, חסרים, ניסוח, כתיב ופיסוק."
+        )
+    else:
+        api_provider = "spelling_only"
+        st.info(
+            "**בדיקת כתיב בלבד** — Gemini 3 Flash מחפש שגיאות כתיב, "
+            "דקדוק ופיסוק בלבד. מהיר יותר, ללא בדיקות לוגיות או ניסוח."
+        )
 
     # Validate the key for the selected provider
     api_key = GEMINI_API_KEY

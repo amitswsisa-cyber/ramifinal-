@@ -39,6 +39,7 @@ from config import (
     OPENAI_DOCX_REVIEW_MODEL,
     GEMINI_REVIEW_MODEL,
     GEMINI_FULL_REVIEW_MODEL,
+    SPELLING_ONLY_MODEL,
     REVIEW_MAX_TOKENS,
     TEMP_DIR,
     STAGE2_SUFFIX,
@@ -175,6 +176,59 @@ LANGUAGE_PROMPT = """\
 
 כלל אינדקס: השתמש אך ורק במספרים המופיעים בטבלת האינדקס שבהודעת המשתמש.
 אל תדווח על שדות שמולאו כראוי. אל תדווח על סעיפי הגבלת אחריות סטנדרטיים (סעיפים 40-46).\
+"""
+
+SPELLING_ONLY_PROMPT = """\
+אתה עורך לשוני מומחה לעברית, המתמחה בבדיקת כתיב ודקדוק בדוחות שמאות מקרקעין.
+תפקידך הבלעדי: לזהות שגיאות כתיב, דקדוק ופיסוק. אל תתייחס כלל לניסוח, סגנון, לוגיקה, מספרים או תוכן מקצועי.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+בדוק אך ורק את הדברים הבאים:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. שגיאות כתיב (category: "spelling"):
+   - מילים שגויות או מילים עם אותיות חסרות/מיותרות
+   - שגיאות הקלדה (אותיות מוחלפות, כפולות, או חסרות)
+   - בלבול בין ה/ח, כ/ק, ט/ת, ש/ס כאשר ברור שיש שגיאה
+   - כתיב חסר/מלא שגוי במילים נפוצות (למשל: "שמאות" ולא "שמאיות")
+   - רווחים כפולים או רווח חסר בין מילים
+   - suggestion: חובה — כתוב את המילה המתוקנת
+2. שגיאות דקדוק (category: "spelling"):
+   - אי-התאמה במין (זכר/נקבה): "הנכס ממוקמת" → "הנכס ממוקם"
+   - אי-התאמה במספר (יחיד/רבים): "הנתונים מראה" → "הנתונים מראים"
+   - שימוש שגוי בסמיכות: "בית של הספר" → "בית ספר"
+   - שימוש שגוי במילות יחס: "עליו" במקום "עליה" כשמתייחסים לנקבה
+   - suggestion: חובה — כתוב את המשפט המתוקן
+3. פיסוק (category: "punctuation"):
+   - נקודה חסרה בסוף משפט
+   - פסיק חסר לפני/אחרי ביטויי זמן, מקום, או תנאי
+   - רווח חסר אחרי סימן פיסוק (נקודה, פסיק, נקודתיים)
+   - רווח מיותר לפני סימן פיסוק
+   - שימוש שגוי בגרשיים (") במקום מרכאות ישראליות
+   - סוגריים שלא נסגרו
+   - suggestion: חובה — הצג את הטקסט עם הפיסוק הנכון
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+כללים קריטיים:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• אל תמציא ממצאים. אם הטקסט תקין — החזר רשימת findings ריקה.
+• אל תתייחס לניסוח — גם אם משפט מנוסח גרוע, אם הכתיב והדקדוק תקינים — אל תדווח.
+• התעלם משמות פרטיים של רחובות, ערים, אנשים, או חברות — ייתכן שהם מאויתים בדרך ייחודית.
+• התעלם ממספרי גוש/חלקה, כתובות, ומספרי תכניות — אלה אינם שגיאות כתיב.
+• אם בפסקה יש מספר שגיאות — כתוב הערה אחת לפסקה עם ציון כל המילים הבעייתיות.
+• severity: השתמש ב-"low" לרוב. השתמש ב-"medium" רק אם השגיאה משנה משמעות (למשל: "לא" שנשמטה).
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+פורמט פלט — JSON בלבד, ללא שום טקסט לפני או אחרי
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{
+  "findings": [
+    {
+      "paragraph_index": <מספר שלם — אינדקס הפסקה מטבלת האינדקס>,
+      "category": <"spelling" | "punctuation">,
+      "severity": <"high" | "medium" | "low">,
+      "comment": "<פירוט השגיאות שנמצאו בעברית>",
+      "suggestion": "<הטקסט המתוקן — חובה>"
+    }
+  ]
+}
+כלל אינדקס: השתמש אך ורק במספרים המופיעים בטבלת האינדקס שבהודעת המשתמש.\
 """
 
 
@@ -755,6 +809,60 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
     return list(merged.values())
 
 
+def _call_spelling_only_api(rich_markdown: str) -> list[dict]:
+    """
+    Single Gemini call focused exclusively on spelling, grammar, and punctuation.
+    Uses SPELLING_ONLY_PROMPT — no logic, phrasing, or structural checks.
+    Returns a validated list of finding dicts (categories: spelling, punctuation only).
+    """
+    if not _GEMINI_AVAILABLE:
+        raise ImportError(
+            "google-genai package is not installed. Run: pip install -U google-genai"
+        )
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY is not set.")
+
+    client = _gemini_module.Client(api_key=GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model=SPELLING_ONLY_MODEL,
+        contents=rich_markdown,
+        config=_gemini_types.GenerateContentConfig(
+            system_instruction=SPELLING_ONLY_PROMPT,
+            response_mime_type="application/json",
+            temperature=0.1,
+            max_output_tokens=8192,
+        ),
+    )
+
+    raw = response.text.strip()
+    if raw.startswith("```json"):
+        raw = raw[7:]
+    if raw.startswith("```"):
+        raw = raw[3:]
+    if raw.endswith("```"):
+        raw = raw[:-3]
+    raw = raw.strip()
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Gemini spelling-only returned invalid JSON: {e}\n\nRaw:\n{raw[:500]}"
+        )
+
+    try:
+        validated = ReviewResponse(**data)
+    except Exception as e:
+        first = data.get("findings", [{}])[0] if data.get("findings") else {}
+        raise ValueError(
+            f"Gemini spelling-only schema mismatch.\n"
+            f"Received fields: {list(first.keys())}\n"
+            f"Pydantic error : {e}"
+        )
+
+    return [f.model_dump() for f in validated.findings]
+
+
 def run_stage2(file_obj, api_provider: str = "anthropic") -> tuple[str, str]:
     """
     Execute Stage 2 pipeline (non-generator version for backward compatibility).
@@ -784,7 +892,7 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
     # ... (API key validation logic preserved) ...
     if api_provider in ("openai", "openai_docx"):
         if not OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY is not set.")
-    elif api_provider in ("gemini", "gemini_full"):
+    elif api_provider in ("gemini", "gemini_full", "spelling_only"):
         if not GEMINI_API_KEY: raise ValueError("GEMINI_API_KEY is not set.")
     elif api_provider == "multi":
         if not OPENAI_API_KEY or not GEMINI_API_KEY:
@@ -833,6 +941,10 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
         yield "🤖 סורק מסמך מלא עם Gemini 3 Flash (טקסט עשיר)..."
         rich_md = get_rich_markdown(unpack_dir)
         findings = _call_gemini_full_api(rich_md)
+    elif api_provider == "spelling_only":
+        yield "🔤 בודק כתיב ודקדוק עם Gemini 3 Flash..."
+        rich_md = get_rich_markdown(unpack_dir)
+        findings = _call_spelling_only_api(rich_md)
     elif api_provider == "gemini":
         yield "🤖 שולח לביקורת Gemini 2.0 Flash..."
         findings = _call_gemini_api(prompt_text)
