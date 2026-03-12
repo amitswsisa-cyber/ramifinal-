@@ -237,21 +237,6 @@ with tab1:
                 )
                 edited_fields[label] = edited_val
 
-            # ── Additional body fields (optional) ─────────────────────
-            body_fields_present = {k: v for k, v in fields.items() if k in _BODY_ONLY_FIELDS}
-            if body_fields_present:
-                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-                st.markdown("**שדות נוספים מתוך גוף המסמך** (אופציונלי — השאר ריק לשמירת הערך הקיים):")
-
-                for label, value in body_fields_present.items():
-                    display_val = value if value else ""
-                    edited_val = st.text_input(
-                        label=label,
-                        value=display_val,
-                        key=f"field_{label}",
-                    )
-                    edited_fields[label] = edited_val
-
             st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
             if has_empty:

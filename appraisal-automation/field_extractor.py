@@ -75,9 +75,6 @@ def extract_cover_fields(file_obj) -> dict[str, str]:
     for table in doc.tables[:5]:
         _scan_table(table, fields)
 
-    # ── Pass 4: extract body fields (section 6 table-style + Table 1) ─────
-    _extract_body_fields(doc, fields)
-
     return fields
 
 

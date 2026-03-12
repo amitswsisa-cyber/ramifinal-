@@ -10,6 +10,7 @@ Works at the lxml <w:t> element level to preserve formatting.
 """
 import os
 import re
+from copy import deepcopy
 from lxml import etree
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -242,14 +243,47 @@ def _set_cell_text(tc_element, new_text):
         if not paras:
             return
         para = paras[0]
+        # Find reference rPr from any run in the same table row
+        ref_rpr = None
+        parent = tc_element.getparent()  # <w:tr>
+        if parent is not None:
+            for r in parent.iter(f"{W}r"):
+                rpr = r.find(f"{W}rPr")
+                if rpr is not None:
+                    ref_rpr = rpr
+                    break
         run = etree.SubElement(para, f"{W}r")
+        if ref_rpr is not None:
+            run.insert(0, deepcopy(ref_rpr))
         t_el = etree.SubElement(run, f"{W}t")
         t_el.text = new_text
         t_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
         return
 
+    # Existing text — find reference font from runs in the cell
+    ref_rfonts = None
+    for r_el in tc_element.iter(f"{W}r"):
+        rpr = r_el.find(f"{W}rPr")
+        if rpr is not None:
+            rf = rpr.find(f"{W}rFonts")
+            if rf is not None:
+                ref_rfonts = rf
+                break
+
     t_elements[0].text = new_text
     t_elements[0].set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+
+    # Ensure the modified run has proper font info
+    if ref_rfonts is not None:
+        first_run = t_elements[0].getparent()
+        if first_run is not None and first_run.tag == f"{W}r":
+            rpr = first_run.find(f"{W}rPr")
+            if rpr is None:
+                rpr = etree.Element(f"{W}rPr")
+                first_run.insert(0, rpr)
+            if rpr.find(f"{W}rFonts") is None:
+                rpr.insert(0, deepcopy(ref_rfonts))
+
     for t_el in t_elements[1:]:
         t_el.text = ""
 
@@ -270,6 +304,8 @@ def _replace_value_in_runs(para_element, old_text, new_text, match_start=None):
     """
     Replace old_text with new_text within the <w:t> elements of a paragraph.
     Preserves formatting by mapping back to individual <w:t> elements.
+    After replacement, copies rFonts from the paragraph's reference run
+    to ensure replaced text uses the same font as the labels.
 
     Args:
         para_element: lxml paragraph element
@@ -307,7 +343,18 @@ def _replace_value_in_runs(para_element, old_text, new_text, match_start=None):
 
     old_end = idx + len(old_text)
 
+    # Find reference rFonts from the first run that has font properties
+    ref_rfonts = None
+    for r in para_element.iter(f"{W}r"):
+        rpr = r.find(f"{W}rPr")
+        if rpr is not None:
+            rf = rpr.find(f"{W}rFonts")
+            if rf is not None:
+                ref_rfonts = rf
+                break
+
     first_overlap = True
+    modified_t_elements = []
     for t_start, t_end, t_el in t_map:
         t_text = t_el.text or ""
 
@@ -321,8 +368,22 @@ def _replace_value_in_runs(para_element, old_text, new_text, match_start=None):
             t_el.text = t_text[:local_start] + new_text + t_text[local_end:]
             t_el.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
             first_overlap = False
+            modified_t_elements.append(t_el)
         else:
             t_el.text = t_text[:local_start] + t_text[local_end:]
+
+    # Ensure modified runs inherit font from the paragraph's reference run
+    if ref_rfonts is not None:
+        for t_el in modified_t_elements:
+            run = t_el.getparent()
+            if run is None or run.tag != f"{W}r":
+                continue
+            rpr = run.find(f"{W}rPr")
+            if rpr is None:
+                rpr = etree.Element(f"{W}rPr")
+                run.insert(0, rpr)
+            if rpr.find(f"{W}rFonts") is None:
+                rpr.insert(0, deepcopy(ref_rfonts))
 
     return True
 
