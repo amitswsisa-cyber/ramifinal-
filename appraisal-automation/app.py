@@ -14,14 +14,14 @@ Deploy to Streamlit Cloud:
 """
 import os
 import streamlit as st
-from config import APP_PASSWORD
+from config import get_app_password
 
 def check_password():
     """Returns True if the user had the correct password."""
 
     def password_entered():
         """Checks whether a password entered by the user is correct."""
-        if st.session_state["password"] == APP_PASSWORD:
+        if st.session_state["password"] == get_app_password():
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # don't store password
         else:
@@ -44,7 +44,7 @@ def check_password():
         # Password correct.
         return True
 
-if not APP_PASSWORD:
+if not get_app_password():
     # If no password set, skip the gate (allow access or show warning)
     pass
 elif not check_password():
@@ -134,7 +134,7 @@ button[data-baseweb="tab"] {
 """, unsafe_allow_html=True)
 
 # ── Imports (after page config) ───────────────────────────────────────────────
-from config import ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
+from config import get_api_key
 from field_extractor import extract_cover_fields, detect_document_type
 from stage1_inject import run_stage1
 from stage2_review import run_stage2_with_progress
@@ -212,10 +212,14 @@ with tab1:
                 edited_fields["סוג שומה"] = shuma_choice
                 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-            # ── Other cover fields ─────────────────────────────────────
+            # ── Body fields that get a separate section ─────────────
+            _BODY_ONLY_FIELDS = {"שטח חלקה", "שטח בנוי", "תיאור זכויות", "מיקום", "החלקה הנישום"}
+
+            # ── Cover fields ──────────────────────────────────────────
             for label, value in fields.items():
-                # סוג שומה is handled by the selectbox above — skip it here
                 if label == "סוג שומה":
+                    continue
+                if label in _BODY_ONLY_FIELDS:
                     continue
 
                 display_val = value if value else ""
@@ -233,6 +237,20 @@ with tab1:
                 )
                 edited_fields[label] = edited_val
 
+            # ── Additional body fields (optional) ─────────────────────
+            body_fields_present = {k: v for k, v in fields.items() if k in _BODY_ONLY_FIELDS}
+            if body_fields_present:
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                st.markdown("**שדות נוספים מתוך גוף המסמך** (אופציונלי — השאר ריק לשמירת הערך הקיים):")
+
+                for label, value in body_fields_present.items():
+                    display_val = value if value else ""
+                    edited_val = st.text_input(
+                        label=label,
+                        value=display_val,
+                        key=f"field_{label}",
+                    )
+                    edited_fields[label] = edited_val
 
             st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
@@ -324,8 +342,20 @@ with tab2:
             "דקדוק ופיסוק בלבד. מהיר יותר, ללא בדיקות לוגיות או ניסוח."
         )
 
+    # ── Optional API key input ────────────────────────────────────────
+    with st.expander("🔑 מפתח API (אופציונלי)"):
+        user_api_key = st.text_input(
+            "הזן מפתח Gemini API:",
+            type="password",
+            key="user_gemini_api_key_input",
+            help="אם לא מוגדר מפתח בשרת, הזן כאן את מפתח ה-API שלך.",
+        )
+        if user_api_key:
+            st.session_state["user_GEMINI_API_KEY"] = user_api_key
+            st.success("✅ מפתח API נשמר לסשן זה.")
+
     # Validate the key for the selected provider
-    api_key = GEMINI_API_KEY
+    api_key = get_api_key("GEMINI_API_KEY")
     if not api_key:
         st.warning("⚠️ מפתח API של Google Gemini לא מוגדר.")
 

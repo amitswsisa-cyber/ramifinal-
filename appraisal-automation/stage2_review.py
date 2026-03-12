@@ -31,9 +31,7 @@ except ImportError:
     _GEMINI_AVAILABLE = False
 
 from config import (
-    ANTHROPIC_API_KEY,
-    OPENAI_API_KEY,
-    GEMINI_API_KEY,
+    get_api_key,
     REVIEW_MODEL,
     OPENAI_REVIEW_MODEL,
     OPENAI_DOCX_REVIEW_MODEL,
@@ -484,10 +482,11 @@ def _call_openai_docx_api(file_bytes: bytes, unpacked_dir: str) -> list[dict]:
 
     if not _OPENAI_AVAILABLE:
         raise ImportError("openai package is not installed. Run: pip install openai>=1.68.0")
-    if not OPENAI_API_KEY:
+    api_key = get_api_key("OPENAI_API_KEY")
+    if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
 
-    client = _openai_module.OpenAI(api_key=OPENAI_API_KEY)
+    client = _openai_module.OpenAI(api_key=api_key)
 
     # Upload and index-map building run in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -560,7 +559,10 @@ def _call_claude_api(paragraph_text: str) -> list[dict]:
     Validates response against the Pydantic schema.
     Uses streaming to reduce perceived wait time.
     """
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    api_key = get_api_key("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY is not set.")
+    client = anthropic.Anthropic(api_key=api_key)
 
     # Use streaming for faster perceived response
     raw_text = ""
@@ -622,10 +624,11 @@ def _call_openai_api(paragraph_text: str) -> list[dict]:
         raise ImportError(
             "openai package is not installed. Run: pip install openai>=1.0.0"
         )
-    if not OPENAI_API_KEY:
+    api_key = get_api_key("OPENAI_API_KEY")
+    if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
 
-    client = _openai_module.OpenAI(api_key=OPENAI_API_KEY)
+    client = _openai_module.OpenAI(api_key=api_key)
 
     completion = client.chat.completions.create(
         model=OPENAI_REVIEW_MODEL,
@@ -678,22 +681,29 @@ def _call_gemini_api(paragraph_text: str) -> list[dict]:
         raise ImportError(
             "google-genai package is not installed. Run: pip install -U google-genai"
         )
-    if not GEMINI_API_KEY:
+    api_key = get_api_key("GEMINI_API_KEY")
+    if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
-    client = _gemini_module.Client(api_key=GEMINI_API_KEY)
+    client = _gemini_module.Client(api_key=api_key)
 
-    response = client.models.generate_content(
+    response_stream = client.models.generate_content_stream(
         model=GEMINI_REVIEW_MODEL,
         contents=paragraph_text,
         config=_gemini_types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
+            response_json_schema=ReviewResponse,
             temperature=0.2,
         ),
     )
 
-    raw_text = response.text.strip()
+    raw_text = ""
+    for chunk in response_stream:
+        if chunk.text:
+            raw_text += chunk.text
+
+    raw_text = raw_text.strip()
 
     # Strip any potential markdown wrappers (Gemini sometimes adds them)
     if raw_text.startswith("```json"):
@@ -727,6 +737,85 @@ def _call_gemini_api(paragraph_text: str) -> list[dict]:
     return [f.model_dump() for f in validated.findings]
 
 
+def _salvage_gemini_json_list(raw_text: str) -> list[dict]:
+    """Attempts to salvage findings from a truncated Gemini JSON response.
+    
+    Handles the common case where Gemini cuts off mid-string, producing
+    invalid JSON like: {"comment": "some text that keeps go...
+    Strategy: find every COMPLETE finding object via regex, ignore the rest.
+    """
+    import json
+    import re
+
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return []
+
+    # ── Strategy 1: Extract all complete finding objects via regex ─────────
+    # Each finding is a JSON object containing "paragraph_index".
+    # We find them by matching balanced braces around that key.
+    findings = []
+    # This pattern matches a { ... } block that contains "paragraph_index"
+    # It handles nested quotes and escaped characters.
+    brace_depth = 0
+    obj_start = -1
+    i = 0
+    while i < len(raw_text):
+        ch = raw_text[i]
+        if ch == '"':  # skip over string contents
+            i += 1
+            while i < len(raw_text):
+                if raw_text[i] == '\\':
+                    i += 2  # skip escaped char
+                    continue
+                if raw_text[i] == '"':
+                    break
+                i += 1
+        elif ch == '{':
+            if brace_depth == 0:
+                obj_start = i
+            brace_depth += 1
+        elif ch == '}':
+            brace_depth -= 1
+            if brace_depth == 0 and obj_start >= 0:
+                candidate = raw_text[obj_start:i+1]
+                if '"paragraph_index"' in candidate:
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict) and "paragraph_index" in obj:
+                            findings.append(obj)
+                    except Exception:
+                        pass
+                obj_start = -1
+        i += 1
+
+    if findings:
+        return findings
+
+    # ── Strategy 2: Cut at last complete `}`, close brackets ──────────────
+    last_brace = raw_text.rfind('}')
+    if last_brace != -1:
+        truncated = raw_text[:last_brace+1]
+        open_brackets = truncated.count('[')
+        close_brackets = truncated.count(']')
+        if open_brackets > close_brackets:
+            truncated += ']' * (open_brackets - close_brackets)
+        open_braces = truncated.count('{')
+        close_braces = truncated.count('}')
+        if open_braces > close_braces:
+            truncated += '}' * (open_braces - close_braces)
+        try:
+            data = json.loads(truncated)
+            if isinstance(data, dict) and "findings" in data:
+                return data["findings"]
+            elif isinstance(data, list):
+                return data
+        except Exception:
+            pass
+
+    return findings
+
+
 def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
     """
     Dual-agent Gemini call: runs LOGIC_PROMPT and LANGUAGE_PROMPT in parallel,
@@ -741,48 +830,96 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
         raise ImportError(
             "google-genai package is not installed. Run: pip install -U google-genai"
         )
-    if not GEMINI_API_KEY:
+    api_key = get_api_key("GEMINI_API_KEY")
+    if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
-    def _single_call(system_prompt: str, agent_label: str) -> list[dict]:
-        client = _gemini_module.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model=GEMINI_FULL_REVIEW_MODEL,
-            contents=rich_markdown,
-            config=_gemini_types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                response_mime_type="application/json",
-                temperature=0.2,
-                max_output_tokens=16384,
-            ),
+    def _single_call_chunk(system_prompt: str, agent_label: str, chunk_markdown: str) -> list[dict]:
+        import time
+        client = _gemini_module.Client(api_key=api_key)
+        
+        last_exception = None
+        last_raw = ""
+        
+        for attempt in range(3):
+            try:
+                response_stream = client.models.generate_content_stream(
+                    model=GEMINI_FULL_REVIEW_MODEL,
+                    contents=chunk_markdown,
+                    config=_gemini_types.GenerateContentConfig(
+                        system_instruction=system_prompt,
+                        response_mime_type="application/json",
+                        response_json_schema=ReviewResponse,
+                        temperature=0.2,
+                        max_output_tokens=16384,
+                    ),
+                )
+
+                raw = ""
+                for chunk in response_stream:
+                    if chunk.text:
+                        raw += chunk.text
+                
+                last_raw = raw
+                raw = raw.strip()
+                if raw.startswith("```json"):
+                    raw = raw[7:]
+                if raw.startswith("```"):
+                    raw = raw[3:]
+                if raw.endswith("```"):
+                    raw = raw[:-3]
+                raw = raw.strip()
+
+                data = json.loads(raw)
+                validated = ReviewResponse(**data)
+                return [f.model_dump() for f in validated.findings]
+                
+            except Exception as e:
+                last_exception = e
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+        
+        # If we exhausted 3 attempts, try to salvage partial findings
+        salvaged = _salvage_gemini_json_list(last_raw)
+        if salvaged:
+            import logging
+            logging.warning(
+                f"Gemini {agent_label} returned invalid JSON but salvaged {len(salvaged)} findings."
+            )
+            return salvaged
+            
+        import logging
+        logging.warning(
+            f"Gemini {agent_label} failed after 3 attempts. Last error: {last_exception}\n\nRaw:\n{last_raw[:500]}"
         )
-        raw = response.text.strip()
-        if raw.startswith("```json"):
-            raw = raw[7:]
-        if raw.startswith("```"):
-            raw = raw[3:]
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
+        return []
 
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"Gemini {agent_label} returned invalid JSON: {e}\n\nRaw:\n{raw[:500]}"
-            )
-
-        try:
-            validated = ReviewResponse(**data)
-        except Exception as e:
-            first = data.get("findings", [{}])[0] if data.get("findings") else {}
-            raise ValueError(
-                f"Gemini {agent_label} schema mismatch.\n"
-                f"Received fields: {list(first.keys())}\n"
-                f"Pydantic error : {e}"
-            )
-
-        return [f.model_dump() for f in validated.findings]
+    def _single_call(system_prompt: str, agent_label: str) -> list[dict]:
+        lines = rich_markdown.split('\n')
+        chunks = []
+        current_chunk = []
+        current_len = 0
+        
+        for line in lines:
+            current_chunk.append(line)
+            current_len += len(line) + 1
+            if current_len > 4000:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+                
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+            
+        all_findings = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            # We use list comprehensions or submit to pass extra args
+            futures = [executor.submit(_single_call_chunk, system_prompt, agent_label, c) for c in chunks]
+            for future in concurrent.futures.as_completed(futures):
+                all_findings.extend(future.result())
+                
+        return all_findings
 
     # ── Run both agents in parallel ────────────────────────────────────────────
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -809,58 +946,110 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
     return list(merged.values())
 
 
-def _call_spelling_only_api(rich_markdown: str) -> list[dict]:
+def _call_spelling_only_single_chunk(chunk_markdown: str) -> list[dict]:
     """
-    Single Gemini call focused exclusively on spelling, grammar, and punctuation.
+    Single Gemini call focused exclusively on spelling, grammar, and punctuation for a chunk.
     Uses SPELLING_ONLY_PROMPT — no logic, phrasing, or structural checks.
     Returns a validated list of finding dicts (categories: spelling, punctuation only).
     """
+    import time
     if not _GEMINI_AVAILABLE:
         raise ImportError(
             "google-genai package is not installed. Run: pip install -U google-genai"
         )
-    if not GEMINI_API_KEY:
+    api_key = get_api_key("GEMINI_API_KEY")
+    if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
-    client = _gemini_module.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=SPELLING_ONLY_MODEL,
-        contents=rich_markdown,
-        config=_gemini_types.GenerateContentConfig(
-            system_instruction=SPELLING_ONLY_PROMPT,
-            response_mime_type="application/json",
-            temperature=0.1,
-            max_output_tokens=8192,
-        ),
+    client = _gemini_module.Client(api_key=api_key)
+    
+    last_exception = None
+    last_raw = ""
+
+    for attempt in range(3):
+        try:
+            response_stream = client.models.generate_content_stream(
+                model=SPELLING_ONLY_MODEL,
+                contents=chunk_markdown,
+                config=_gemini_types.GenerateContentConfig(
+                    system_instruction=SPELLING_ONLY_PROMPT,
+                    response_mime_type="application/json",
+                    response_json_schema=ReviewResponse,
+                    temperature=0.1,
+                    max_output_tokens=8192,
+                ),
+            )
+
+            raw = ""
+            for chunk in response_stream:
+                if chunk.text:
+                    raw += chunk.text
+                    
+            last_raw = raw
+            raw = raw.strip()
+            if raw.startswith("```json"):
+                raw = raw[7:]
+            if raw.startswith("```"):
+                raw = raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            raw = raw.strip()
+
+            data = json.loads(raw)
+            validated = ReviewResponse(**data)
+            return [f.model_dump() for f in validated.findings]
+            
+        except Exception as e:
+            last_exception = e
+            if attempt < 2:
+                time.sleep(2)
+                continue
+                
+    # Exhausted retries, try salvage
+    salvaged = _salvage_gemini_json_list(last_raw)
+    if salvaged:
+        import logging
+        logging.warning(
+            f"Gemini spelling-only returned invalid JSON but salvaged {len(salvaged)} findings."
+        )
+        return salvaged
+        
+    # Don't crash the app — return empty list and log a warning
+    import logging
+    logging.warning(
+        f"Gemini spelling-only returned invalid JSON: {last_exception}\n\nRaw: {last_raw[:500]}"
     )
+    return []
 
-    raw = response.text.strip()
-    if raw.startswith("```json"):
-        raw = raw[7:]
-    if raw.startswith("```"):
-        raw = raw[3:]
-    if raw.endswith("```"):
-        raw = raw[:-3]
-    raw = raw.strip()
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise ValueError(
-            f"Gemini spelling-only returned invalid JSON: {e}\n\nRaw:\n{raw[:500]}"
-        )
+def _call_spelling_only_api(rich_markdown: str) -> list[dict]:
+    import concurrent.futures
 
-    try:
-        validated = ReviewResponse(**data)
-    except Exception as e:
-        first = data.get("findings", [{}])[0] if data.get("findings") else {}
-        raise ValueError(
-            f"Gemini spelling-only schema mismatch.\n"
-            f"Received fields: {list(first.keys())}\n"
-            f"Pydantic error : {e}"
-        )
-
-    return [f.model_dump() for f in validated.findings]
+    # Split into chunks to avoid hitting max_output_tokens=8192 for large documents with many errors
+    lines = rich_markdown.split('\n')
+    chunks = []
+    current_chunk = []
+    current_len = 0
+    
+    for line in lines:
+        current_chunk.append(line)
+        current_len += len(line) + 1
+        if current_len > 4000:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = []
+            current_len = 0
+            
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+        
+    all_findings = []
+    # Use max_workers=4 to process the chunks in parallel and keep it very fast
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(_call_spelling_only_single_chunk, chunks))
+        for r in results:
+            all_findings.extend(r)
+            
+    return all_findings
 
 
 def run_stage2(file_obj, api_provider: str = "anthropic") -> tuple[str, str]:
@@ -891,14 +1080,14 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
     """
     # ... (API key validation logic preserved) ...
     if api_provider in ("openai", "openai_docx"):
-        if not OPENAI_API_KEY: raise ValueError("OPENAI_API_KEY is not set.")
+        if not get_api_key("OPENAI_API_KEY"): raise ValueError("OPENAI_API_KEY is not set.")
     elif api_provider in ("gemini", "gemini_full", "spelling_only"):
-        if not GEMINI_API_KEY: raise ValueError("GEMINI_API_KEY is not set.")
+        if not get_api_key("GEMINI_API_KEY"): raise ValueError("GEMINI_API_KEY is not set.")
     elif api_provider == "multi":
-        if not OPENAI_API_KEY or not GEMINI_API_KEY:
+        if not get_api_key("OPENAI_API_KEY") or not get_api_key("GEMINI_API_KEY"):
             raise ValueError("Multi-agent review requires both OPENAI_API_KEY and GEMINI_API_KEY.")
     else:
-        if not ANTHROPIC_API_KEY: raise ValueError("ANTHROPIC_API_KEY is not set.")
+        if not get_api_key("ANTHROPIC_API_KEY"): raise ValueError("ANTHROPIC_API_KEY is not set.")
 
     # ── Step 1: Extract text & Map Sections ──────────────────────────────────
     yield "📄 מנתח מבנה מסמך וממפה סעיפים..."

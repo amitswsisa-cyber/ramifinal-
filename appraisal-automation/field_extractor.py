@@ -75,6 +75,9 @@ def extract_cover_fields(file_obj) -> dict[str, str]:
     for table in doc.tables[:5]:
         _scan_table(table, fields)
 
+    # ── Pass 4: extract body fields (section 6 table-style + Table 1) ─────
+    _extract_body_fields(doc, fields)
+
     return fields
 
 
@@ -318,3 +321,52 @@ def _scan_table(table, fields: dict[str, str]) -> None:
                     continue
 
             i += 1
+
+
+# ── Body field extraction (section 6 + Table 1) ──────────────────────────────
+
+# Labels to extract from body paragraphs (tab-separated or colon-separated)
+_BODY_FIELD_LABELS = {"שטח חלקה", "שטח בנוי", "תיאור זכויות"}
+
+# Labels to extract from Table 1 (פרטי הנכס)
+_TABLE1_LABELS_SET = {"גוש", "חלקה", "שטח חלקה", "תת חלקה", "תת-חלקה",
+                      "שטח בנוי", "תיאור זכויות", "מיקום", "החלקה הנישום", "מגרש"}
+
+
+def _extract_body_fields(doc, fields: dict[str, str]) -> None:
+    """
+    Extract additional fields from the document body that aren't on the cover page.
+    These come from:
+    1. Section 6 tab-separated lines
+    2. Table 1 (פרטי הנכס) — table rows with known labels
+    """
+    # Scan body paragraphs for colon-separated pairs with body-specific labels
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        pairs = _extract_pairs_from_line(text)
+        for label, value in pairs.items():
+            if label in _BODY_FIELD_LABELS and label not in fields:
+                fields[label] = value
+
+    # Scan all tables for Table 1 labels
+    for table in doc.tables:
+        for row in table.rows:
+            cells = row.cells
+            if len(cells) < 2:
+                continue
+            for i, cell in enumerate(cells):
+                cell_text = cell.text.strip()
+                label_candidate = cell_text.rstrip(":").strip()
+                if label_candidate in _TABLE1_LABELS_SET:
+                    field_name = label_candidate.replace("-", " ")
+                    if field_name in fields:
+                        continue
+                    for offset in [-1, 1]:
+                        adj_idx = i + offset
+                        if 0 <= adj_idx < len(cells):
+                            val = cells[adj_idx].text.strip()
+                            if val and val != cell_text and not re.fullmatch(r'_+', val):
+                                fields[field_name] = val
+                                break

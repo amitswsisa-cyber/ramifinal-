@@ -10,8 +10,7 @@ import concurrent.futures
 from typing import List, Dict, Any
 
 from config import (
-    OPENAI_API_KEY,
-    GEMINI_API_KEY,
+    get_api_key,
     MULTI_AGENT_PHRASING_A,
     MULTI_AGENT_PHRASING_B,
     MULTI_AGENT_SPELLING,
@@ -60,7 +59,11 @@ class MultiAgentReviewer:
 
     def _call_openai(self, model: str, system_prompt: str, user_text: str) -> List[Finding]:
         import openai
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        api_key = get_api_key("OPENAI_API_KEY")
+        if not api_key:
+            logging.error("Multi-agent: OPENAI_API_KEY not found.")
+            return []
+        client = openai.OpenAI(api_key=api_key)
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -81,7 +84,11 @@ class MultiAgentReviewer:
     def _call_gemini(self, model: str, system_prompt: str, user_text: str) -> List[Finding]:
         from google import genai
         from google.genai import types
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        api_key = get_api_key("GEMINI_API_KEY")
+        if not api_key:
+            logging.error("Multi-agent: GEMINI_API_KEY not found.")
+            return []
+        client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
             model=model,
             contents=user_text,

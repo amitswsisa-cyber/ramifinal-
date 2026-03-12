@@ -29,17 +29,45 @@ COMMENT_AUTHOR = "רמי סויצקי"
 
 # ── API Key ───────────────────────────────────────────────────────────────────
 # Prioritize st.secrets (Streamlit Cloud) then fall back to environment variables
-try:
-    import streamlit as st
-    ANTHROPIC_API_KEY = st.secrets["api_keys"].get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
-    OPENAI_API_KEY    = st.secrets["api_keys"].get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
-    GEMINI_API_KEY    = st.secrets["api_keys"].get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY", ""))
-    APP_PASSWORD      = st.secrets["passwords"].get("APP_PASSWORD", "")
-except (ImportError, KeyError, FileNotFoundError):
-    ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-    OPENAI_API_KEY    = os.environ.get("OPENAI_API_KEY", "")
-    GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
-    APP_PASSWORD      = os.environ.get("APP_PASSWORD", "") # Fallback for local testing
+def get_api_key(key_name: str) -> str:
+    """Dynamically get the API key. Priority: session_state > st.secrets > env vars."""
+    try:
+        import streamlit as st
+        # Check session_state first (user-provided key in UI)
+        session_key = f"user_{key_name}"
+        if session_key in st.session_state:
+            val = st.session_state[session_key]
+            if val:
+                return str(val).strip().strip("\"'")
+        if "api_keys" in st.secrets and key_name in st.secrets["api_keys"]:
+            val = st.secrets["api_keys"][key_name]
+            if val: return str(val).strip().strip("\"'")
+        if key_name in st.secrets:
+            val = st.secrets[key_name]
+            if val: return str(val).strip().strip("\"'")
+    except (ImportError, KeyError, FileNotFoundError, Exception):
+        pass
+    return os.environ.get(key_name, "").strip().strip("\"'")
+
+def get_app_password() -> str:
+    """Dynamically get the app password."""
+    try:
+        import streamlit as st
+        if "passwords" in st.secrets and "APP_PASSWORD" in st.secrets["passwords"]:
+            val = st.secrets["passwords"]["APP_PASSWORD"]
+            if val: return val
+        if "APP_PASSWORD" in st.secrets:
+            val = st.secrets["APP_PASSWORD"]
+            if val: return val
+    except (ImportError, KeyError, FileNotFoundError, Exception):
+        pass
+    return os.environ.get("APP_PASSWORD", "")
+
+# Fallback constants for any older code (still cached at module load)
+ANTHROPIC_API_KEY = get_api_key("ANTHROPIC_API_KEY")
+OPENAI_API_KEY    = get_api_key("OPENAI_API_KEY")
+GEMINI_API_KEY    = get_api_key("GEMINI_API_KEY")
+APP_PASSWORD      = get_app_password()
 
 # OpenAI models for Stage 2 review
 OPENAI_REVIEW_MODEL = "o3-mini"

@@ -11,22 +11,14 @@ Flow:
 Does NOT chain to Stage 2. Appraiser works on the document manually between stages.
 """
 import os
-import io
 import re
 import tempfile
 import shutil
 
 from config import TEMP_DIR, STAGE1_SUFFIX
-from docx_utils import docx_unpack, docx_pack, replace_throughout_document
+from docx_utils import docx_unpack, docx_pack
 from field_extractor import extract_cover_fields
-
-# Minimum safe lengths for global replacement.
-# Values shorter than these are replaced only in known label patterns.
-MIN_NUMERIC_LENGTH = 2   # single digits like "2" are too dangerous globally
-MIN_TEXT_LENGTH    = 2   # single Hebrew letters are too dangerous globally
-
-# Labels whose values are commonly single-digit — replace ONLY in "label: value" patterns
-PATTERN_ONLY_LABELS = {"תת חלקה", "תת-חלקה"}
+from pattern_replacer import pattern_replace
 
 
 def run_stage1(file_obj, confirmed_fields: dict[str, str]) -> tuple[str, dict[str, int]]:
@@ -61,81 +53,18 @@ def run_stage1(file_obj, confirmed_fields: dict[str, str]) -> tuple[str, dict[st
     unpack_dir = src_path.replace(".docx", "_unpacked")
     docx_unpack(src_path, unpack_dir)
 
-    # ── Build replacement map: {old_value → new_value} ────────────────────────
-    #
-    # CORRECT LOGIC:
-    #   extracted_fields[label] = old_value  (what was in the template)
-    #   confirmed_fields[label] = new_value  (what the user typed)
-    #   replacements[old_value] = new_value
-    #
-    # Labels (e.g. "גוש", "חלקה") are NEVER in the replacement dict.
-    # Only VALUES (e.g. "6854", "הועדה המקומית שוהם") are replaced.
-
-    replacements: dict[str, str] = {}
-    pattern_replacements: dict[str, str] = {}  # full "label: old" → "label: new"
-
-    for label in extracted_fields:
-        old_value = extracted_fields[label].strip()
-        new_value = confirmed_fields.get(label, "").strip()
-
-        # Skip: nothing changed, or new value is empty/EMPTY
-        if not old_value or not new_value:
-            continue
-        if old_value == new_value:
-            continue
-        if new_value in ("EMPTY", "⚠️ EMPTY"):
-            continue
-
-        # Special case: labels whose values are typically single digits
-        # Replace only in "label: value" pattern, not globally
-        if label in PATTERN_ONLY_LABELS:
-            for sep in (": ", " "):
-                pattern_old = f"{label}{sep}{old_value}"
-                pattern_new = f"{label}{sep}{new_value}"
-                pattern_replacements[pattern_old] = pattern_new
-            continue
-
-        # Skip values that are too short to safely replace globally
-        if old_value.isdigit() and len(old_value) < MIN_NUMERIC_LENGTH:
-            # Still do pattern replacement for safety
-            for sep in (": ", " "):
-                pattern_old = f"{label}{sep}{old_value}"
-                pattern_new = f"{label}{sep}{new_value}"
-                pattern_replacements[pattern_old] = pattern_new
-            continue
-
-        if len(old_value) < MIN_TEXT_LENGTH:
-            # Exception: allow blank placeholder sequences like '____', '_____' etc.
-            # These are template placeholders that should always be replaced.
-            if not re.fullmatch(r'_+', old_value):
-                continue
-
-        replacements[old_value] = new_value
-
-    # Merge pattern replacements in (these go LONGEST FIRST by default since
-    # they're longer strings — handled inside replace_throughout_document)
-    replacements.update(pattern_replacements)
-
-    # ── Execute replacement ───────────────────────────────────────────────────
-    total_counts = replace_throughout_document(unpack_dir, replacements)
+    # ── Execute pattern-based replacement ─────────────────────────────────────
+    # The new pattern_replace() function uses context-aware regex patterns
+    # instead of global find-and-replace. It takes both the confirmed (new)
+    # values and the extracted (old) values to know what to search for.
+    total_counts = pattern_replace(unpack_dir, confirmed_fields, extracted_fields)
 
     # ── Remove unfilled blank lines after replacement ────────────────────────
     # Lines that still contain only underscores are unfilled template slots — remove them.
     _remove_unfilled_blank_lines(unpack_dir)
 
-    # ── Remap counts back to labels for the UI summary ────────────────────────
-    # The UI shows "label (old_value): N locations" — so invert the mapping.
-    label_counts: dict[str, int] = {}
-    for label in extracted_fields:
-        old_value = extracted_fields[label].strip()
-        new_value = confirmed_fields.get(label, "").strip()
-        count = total_counts.get(old_value, 0)
-        # Also count any pattern replacements for this label
-        for sep in (": ", " "):
-            pat = f"{label}{sep}{old_value}"
-            count += total_counts.get(pat, 0)
-        if count > 0:
-            label_counts[label] = count
+    # ── Pattern replacer already returns {field_name: count} ─────────────────
+    label_counts = {k: v for k, v in total_counts.items() if v > 0}
 
     # ── Repack ───────────────────────────────────────────────────────────────
     base_name = _stem(original_name) + STAGE1_SUFFIX + ".docx"
