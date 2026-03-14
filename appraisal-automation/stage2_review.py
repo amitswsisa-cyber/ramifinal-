@@ -834,73 +834,54 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
-    def _single_call_chunk(system_prompt: str, agent_label: str, chunk_markdown: str) -> list[dict]:
+    def _gemini_call(system_prompt: str, agent_label: str, content: str, max_tokens: int = 16384) -> list[dict]:
+        """Single Gemini API call with retries. Raises on total failure."""
         import time
         client = _gemini_module.Client(api_key=api_key)
-        
+
         last_exception = None
-        last_raw = ""
-        
         for attempt in range(3):
             try:
-                response_stream = client.models.generate_content_stream(
+                response = client.models.generate_content(
                     model=GEMINI_FULL_REVIEW_MODEL,
-                    contents=chunk_markdown,
+                    contents=content,
                     config=_gemini_types.GenerateContentConfig(
                         system_instruction=system_prompt,
                         response_mime_type="application/json",
                         response_json_schema=ReviewResponse,
                         temperature=0.2,
-                        max_output_tokens=16384,
+                        max_output_tokens=max_tokens,
                     ),
                 )
 
-                raw = ""
-                for chunk in response_stream:
-                    if chunk.text:
-                        raw += chunk.text
-                
-                last_raw = raw
-                raw = raw.strip()
-                if raw.startswith("```json"):
-                    raw = raw[7:]
-                if raw.startswith("```"):
-                    raw = raw[3:]
-                if raw.endswith("```"):
-                    raw = raw[:-3]
-                raw = raw.strip()
-
+                raw = _strip_markdown_wrappers(response.text or "")
                 data = json.loads(raw)
                 validated = ReviewResponse(**data)
+                logger.info(f"[{agent_label}] returned {len(validated.findings)} findings")
                 return [f.model_dump() for f in validated.findings]
-                
+
             except Exception as e:
                 last_exception = e
+                logger.warning(f"[{agent_label}] attempt {attempt+1}/3 failed: {e}")
                 if attempt < 2:
                     time.sleep(2)
                     continue
-        
-        # If we exhausted 3 attempts, try to salvage partial findings
-        salvaged = _salvage_gemini_json_list(last_raw)
-        if salvaged:
-            import logging
-            logging.warning(
-                f"Gemini {agent_label} returned invalid JSON but salvaged {len(salvaged)} findings."
-            )
-            return salvaged
-            
-        import logging
-        logging.warning(
-            f"Gemini {agent_label} failed after 3 attempts. Last error: {last_exception}\n\nRaw:\n{last_raw[:500]}"
-        )
-        return []
 
-    def _single_call(system_prompt: str, agent_label: str) -> list[dict]:
+        raise RuntimeError(
+            f"Gemini {agent_label} failed after 3 attempts: {last_exception}"
+        )
+
+    # ── LOGIC: send full document (needs global context) ──────────────────
+    def _logic_call() -> list[dict]:
+        return _gemini_call(LOGIC_PROMPT, "LOGIC", rich_markdown, max_tokens=65536)
+
+    # ── LANGUAGE: chunk and process in parallel (local errors) ─────────────
+    def _language_call() -> list[dict]:
         lines = rich_markdown.split('\n')
         chunks = []
         current_chunk = []
         current_len = 0
-        
+
         for line in lines:
             current_chunk.append(line)
             current_len += len(line) + 1
@@ -908,23 +889,23 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
                 chunks.append("\n".join(current_chunk))
                 current_chunk = []
                 current_len = 0
-                
+
         if current_chunk:
             chunks.append("\n".join(current_chunk))
-            
+
+        logger.info(f"Language pipeline: {len(chunks)} chunks")
         all_findings = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            # We use list comprehensions or submit to pass extra args
-            futures = [executor.submit(_single_call_chunk, system_prompt, agent_label, c) for c in chunks]
+            futures = [executor.submit(_gemini_call, LANGUAGE_PROMPT, f"LANGUAGE_CHUNK_{i}", c) for i, c in enumerate(chunks)]
             for future in concurrent.futures.as_completed(futures):
                 all_findings.extend(future.result())
-                
+
         return all_findings
 
     # ── Run both agents in parallel ────────────────────────────────────────────
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        logic_future    = executor.submit(_single_call, LOGIC_PROMPT,    "LOGIC")
-        language_future = executor.submit(_single_call, LANGUAGE_PROMPT, "LANGUAGE")
+        logic_future    = executor.submit(_logic_call)
+        language_future = executor.submit(_language_call)
         logic_findings    = logic_future.result()
         language_findings = language_future.result()
 
@@ -951,24 +932,21 @@ def _call_spelling_only_single_chunk(chunk_markdown: str) -> list[dict]:
     Single Gemini call focused exclusively on spelling, grammar, and punctuation for a chunk.
     Uses SPELLING_ONLY_PROMPT — no logic, phrasing, or structural checks.
     Returns a validated list of finding dicts (categories: spelling, punctuation only).
+    Raises on failure so errors are visible to the user.
     """
     import time
     if not _GEMINI_AVAILABLE:
-        raise ImportError(
-            "google-genai package is not installed. Run: pip install -U google-genai"
-        )
+        raise ImportError("google-genai package is not installed. Run: pip install -U google-genai")
     api_key = get_api_key("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("GEMINI_API_KEY is not set.")
 
     client = _gemini_module.Client(api_key=api_key)
-    
-    last_exception = None
-    last_raw = ""
 
+    last_exception = None
     for attempt in range(3):
         try:
-            response_stream = client.models.generate_content_stream(
+            response = client.models.generate_content(
                 model=SPELLING_ONLY_MODEL,
                 contents=chunk_markdown,
                 config=_gemini_types.GenerateContentConfig(
@@ -976,50 +954,24 @@ def _call_spelling_only_single_chunk(chunk_markdown: str) -> list[dict]:
                     response_mime_type="application/json",
                     response_json_schema=ReviewResponse,
                     temperature=0.1,
-                    max_output_tokens=8192,
+                    max_output_tokens=65536,
                 ),
             )
 
-            raw = ""
-            for chunk in response_stream:
-                if chunk.text:
-                    raw += chunk.text
-                    
-            last_raw = raw
-            raw = raw.strip()
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.startswith("```"):
-                raw = raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            raw = raw.strip()
-
+            raw = _strip_markdown_wrappers(response.text or "")
             data = json.loads(raw)
             validated = ReviewResponse(**data)
+            logger.info(f"[SPELLING_ONLY] chunk returned {len(validated.findings)} findings")
             return [f.model_dump() for f in validated.findings]
-            
+
         except Exception as e:
             last_exception = e
+            logger.warning(f"[SPELLING_ONLY] attempt {attempt+1}/3 failed: {e}")
             if attempt < 2:
                 time.sleep(2)
                 continue
-                
-    # Exhausted retries, try salvage
-    salvaged = _salvage_gemini_json_list(last_raw)
-    if salvaged:
-        import logging
-        logging.warning(
-            f"Gemini spelling-only returned invalid JSON but salvaged {len(salvaged)} findings."
-        )
-        return salvaged
-        
-    # Don't crash the app — return empty list and log a warning
-    import logging
-    logging.warning(
-        f"Gemini spelling-only returned invalid JSON: {last_exception}\n\nRaw: {last_raw[:500]}"
-    )
-    return []
+
+    raise RuntimeError(f"Gemini spelling-only failed after 3 attempts: {last_exception}")
 
 
 def _call_spelling_only_api(rich_markdown: str) -> list[dict]:

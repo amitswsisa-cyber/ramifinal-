@@ -61,15 +61,15 @@ def inject_all_comments(unpacked_dir: str, findings: list[dict]) -> int:
     if not findings:
         return 0
 
-    # ── 1. Dedup: keep highest-severity finding per (paragraph_index, category) ──
-    SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
-    best: dict[tuple, dict] = {}
+    # ── 1. Dedup: remove only exact duplicates (same error_snippet + comment) ──
+    # Multiple errors in the same paragraph/category are preserved.
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
     for f in findings:
-        key  = (f.get("paragraph_index", 0), f.get("category", ""))
-        rank = SEVERITY_RANK.get(f.get("severity", "low"), 1)
-        if key not in best or rank > SEVERITY_RANK.get(best[key].get("severity", "low"), 1):
-            best[key] = f
-    deduped = list(best.values())
+        key = (f.get("error_snippet", ""), f.get("comment", ""))
+        if key not in seen:
+            seen.add(key)
+            deduped.append(f)
 
     # ── 2. Clamp to nearest non-empty paragraph ───────────────────────────────
     paragraphs = get_paragraph_texts(unpacked_dir)

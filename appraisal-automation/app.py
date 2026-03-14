@@ -327,18 +327,6 @@ with tab2:
             "דקדוק ופיסוק בלבד. מהיר יותר, ללא בדיקות לוגיות או ניסוח."
         )
 
-    # ── Optional API key input ────────────────────────────────────────
-    with st.expander("🔑 מפתח API (אופציונלי)"):
-        user_api_key = st.text_input(
-            "הזן מפתח Gemini API:",
-            type="password",
-            key="user_gemini_api_key_input",
-            help="אם לא מוגדר מפתח בשרת, הזן כאן את מפתח ה-API שלך.",
-        )
-        if user_api_key:
-            st.session_state["user_GEMINI_API_KEY"] = user_api_key
-            st.success("✅ מפתח API נשמר לסשן זה.")
-
     # Validate the key for the selected provider
     api_key = get_api_key("GEMINI_API_KEY")
     if not api_key:
