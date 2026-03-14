@@ -66,6 +66,11 @@ class Finding(BaseModel):
 class ReviewResponse(BaseModel):
     findings: list[Finding]
 
+# Pre-compute the JSON schema dict for Gemini API calls.
+# Passing the Pydantic class directly (ModelMetaclass) fails serialization
+# on some google-genai SDK versions, so we pass the dict instead.
+_REVIEW_RESPONSE_SCHEMA = ReviewResponse.model_json_schema()
+
 
 # ── Dual-Agent Prompts for gemini_full (parallel calls) ───────────────────────
 # Used exclusively by _call_gemini_full_api.
@@ -696,7 +701,7 @@ def _call_gemini_api(paragraph_text: str) -> list[dict]:
         config=_gemini_types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             response_mime_type="application/json",
-            response_json_schema=ReviewResponse,
+            response_schema=_REVIEW_RESPONSE_SCHEMA,
             temperature=0.2,
         ),
     )
@@ -863,7 +868,7 @@ def _call_gemini_full_api(rich_markdown: str) -> list[dict]:
                     config=_gemini_types.GenerateContentConfig(
                         system_instruction=system_prompt,
                         response_mime_type="application/json",
-                        response_json_schema=ReviewResponse,
+                        response_schema=_REVIEW_RESPONSE_SCHEMA,
                         temperature=0.2,
                         max_output_tokens=max_tokens,
                     ),
@@ -967,7 +972,7 @@ def _call_spelling_only_single_chunk(chunk_markdown: str) -> list[dict]:
                 config=_gemini_types.GenerateContentConfig(
                     system_instruction=SPELLING_ONLY_PROMPT,
                     response_mime_type="application/json",
-                    response_json_schema=ReviewResponse,
+                    response_schema=_REVIEW_RESPONSE_SCHEMA,
                     temperature=0.1,
                     max_output_tokens=65536,
                 ),
