@@ -9,9 +9,12 @@ import os
 import io
 import sys
 import json
+import logging
 import shutil
 import tempfile
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 from typing import Literal
@@ -735,6 +738,18 @@ def _call_gemini_api(paragraph_text: str) -> list[dict]:
         )
 
     return [f.model_dump() for f in validated.findings]
+
+
+def _strip_markdown_wrappers(text: str) -> str:
+    """Strip ```json ... ``` wrappers that Gemini sometimes adds around JSON."""
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    return text.strip()
 
 
 def _salvage_gemini_json_list(raw_text: str) -> list[dict]:
