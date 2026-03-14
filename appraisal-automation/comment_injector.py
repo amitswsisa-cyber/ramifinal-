@@ -35,15 +35,12 @@ def format_comment_text(finding: dict) -> str:
     category = finding.get("category", "logic")
     prefix   = EMOJI_MAP.get(category, "📌")
     comment_body = finding.get("comment", "")
-    section = finding.get("section_label")
 
     text = f"{prefix}: {comment_body}"
-    if section:
-        text = f"📍 {section}\n" + text
 
     suggestion = finding.get("suggestion")
     if suggestion:
-        text += f"\n\n💡 הצעה: {suggestion}"
+        text += f"\n→ {suggestion}"
 
     return text
 
