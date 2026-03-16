@@ -164,6 +164,8 @@ TABLE1_LABELS = {
     "החלקה הנישום": "החלקה הנישום",
     "החלק הנישום": "החלקה הנישום",
     "מגרש": "מגרש",
+    "שכונה": "שכונה",
+    "שכונת": "שכונה",
 }
 
 
@@ -182,7 +184,7 @@ def _process_table1(root, field_values, counts):
         for row in rows:
             cells = list(row.iter(f"{W}tc"))
             for cell in cells:
-                label_text = _get_cell_text(cell).strip()
+                label_text = _get_cell_text(cell).strip().rstrip(": ").strip()
                 if label_text in TABLE1_LABELS:
                     is_table1 = True
                     break
@@ -203,15 +205,29 @@ def _process_table1(root, field_values, counts):
             field_name = None
             for i, cell in enumerate(cells):
                 text = _get_cell_text(cell).strip()
-                if text in TABLE1_LABELS:
+                # Strip trailing colon/whitespace for matching (cells may contain "גוש:" or "גוש :")
+                text_clean = text.rstrip(": ").strip()
+                if text_clean in TABLE1_LABELS:
                     label_cell_idx = i
-                    field_name = TABLE1_LABELS[text]
+                    field_name = TABLE1_LABELS[text_clean]
                     break
 
             if label_cell_idx < 0 or not field_name:
                 continue
 
             new_value = field_values.get(field_name, "")
+
+            # Composite field: table label "מיקום" → cover fields "רחוב" + "עיר"
+            if not new_value and field_name == "מיקום":
+                street = field_values.get("רחוב", "")
+                city = field_values.get("עיר", "")
+                if street and city:
+                    new_value = f"{street}, {city}"
+                elif street:
+                    new_value = street
+                elif city:
+                    new_value = city
+
             if not new_value:
                 continue
 
