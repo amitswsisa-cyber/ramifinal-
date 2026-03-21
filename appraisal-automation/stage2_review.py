@@ -46,7 +46,8 @@ from config import (
     STAGE2_SUFFIX,
 )
 from docx_utils import docx_unpack, docx_pack_safe, get_paragraph_texts, get_rich_markdown
-from comment_injector import inject_all_comments, build_summary
+from comment_injector import build_summary
+from inline_injector import inject_inline_reviews
 
 
 # ── Pydantic Schema for structured output ─────────────────────────────────────
@@ -943,10 +944,10 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
         if idx is not None and idx in section_map:
             f["section_label"] = section_map[idx]
 
-    # ── Step 3: Inject comments ───────────────────────────────────────────────
+    # ── Step 3: Inject inline markers ─────────────────────────────────────────
     yield "💬 מזריק הערות למסמך..."
 
-    inject_all_comments(unpack_dir, findings)
+    inject_inline_reviews(unpack_dir, findings)
 
     # ── Build output summary ──────────────────────────────────────────────────
     summary = build_summary(findings)
@@ -957,7 +958,7 @@ def run_stage2_with_progress(file_obj, api_provider: str = "anthropic"):
     stem        = _stem(original_name)
     output_name = stem + STAGE2_SUFFIX + ".docx"
     output_path = os.path.join(TEMP_DIR, output_name)
-    _STAGE2_MODIFIED_FILES = ["word/document.xml", "word/comments.xml"]
+    _STAGE2_MODIFIED_FILES = ["word/document.xml"]
     docx_pack_safe(unpack_dir, output_path, validate_files=_STAGE2_MODIFIED_FILES)
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
