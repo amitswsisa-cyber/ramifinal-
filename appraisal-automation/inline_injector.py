@@ -109,15 +109,23 @@ def inject_inline_reviews(unpacked_dir: str, findings: list[dict]) -> int:
         # Create Run Properties (rPr) for formatting
         rPr = etree.SubElement(run, f"{W}rPr")
         
-        # Try to copy font/size from target's first run if possible
+        # Copy size from target's first run, but skip fonts (they may not support Hebrew)
         first_r = target_para.find(f"{W}r")
         if first_r is not None:
             target_rPr = first_r.find(f"{W}rPr")
             if target_rPr is not None:
                 for child in target_rPr:
-                    # Skip highlight if already present, we'll add our own
-                    if child.tag != f"{W}highlight":
+                    tag = child.tag
+                    # Skip fonts (may be Symbol/Math), highlight (we add our own),
+                    # and cs/rtl overrides (we set our own below)
+                    if tag not in (f"{W}rFonts", f"{W}highlight"):
                         rPr.append(deepcopy(child))
+
+        # Force a Hebrew-compatible font for the marker text
+        rFonts = etree.SubElement(rPr, f"{W}rFonts")
+        rFonts.set(f"{W}cs", "David")
+        rFonts.set(f"{W}ascii", "David")
+        rFonts.set(f"{W}hAnsi", "David")
 
         # Add "Marker" effect (Yellow Highlight)
         highlight = etree.SubElement(rPr, f"{W}highlight")
