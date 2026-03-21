@@ -77,7 +77,7 @@ def inject_inline_reviews(unpacked_dir: str, findings: list[dict]) -> int:
         logger.error("Could not find <body> in document.xml")
         return 0
 
-    all_paras = list(body.xpath(f".//{W}p"))
+    all_paras = list(body.iter(f"{W}p"))
     total_paras = len(all_paras)
 
     # 3. Sort findings by paragraph index in REVERSE order
