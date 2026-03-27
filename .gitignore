@@ -24,7 +24,8 @@ Thumbs.db
 .DS_Store
 
 # Large DOCX test files (optional — keep templates only if needed)
-# *.docx
+*.docx
+~$*.docx
 
 # Loki/Claude config
 .loki/
