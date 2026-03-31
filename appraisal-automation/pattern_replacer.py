@@ -425,9 +425,15 @@ def _apply_pattern_to_paragraph(para_element, pattern, field_names, field_values
     if not remaining_fields:
         return
 
-    # Re-read text (may have been modified by earlier pattern)
     full_text = _get_para_text(para_element)
     if not full_text.strip():
+        return
+
+    # 🛑 NUCLEAR SAFEGUARD FOR LETTERHEAD 🛑
+    # If the paragraph contains ANY of the letterhead keywords (English or Hebrew),
+    # immediately abort processing this entire paragraph.
+    upper_text = full_text.upper()
+    if "אמירים" in full_text or "AMIRIM" in upper_text or "TEL-AVIV ISRAEL" in upper_text or "03-644" in full_text:
         return
 
     match = pattern.search(full_text)
