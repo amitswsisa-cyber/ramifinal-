@@ -445,6 +445,11 @@ def _apply_pattern_to_paragraph(para_element, pattern, field_names, field_values
             return
 
         old_value = groups[1]
+
+        # Hardcode protection for the base template (letterhead address)
+        if "אמירים" in old_value and field_name in ["רחוב", "מיקום", "עיר"]:
+            return
+
         # Calculate exact position of the value in the full paragraph text
         value_start = match.start(2)  # group 2 = the value capture group
         # Normalize: strip trailing period from new_value since pattern
@@ -472,6 +477,11 @@ def _apply_pattern_to_paragraph(para_element, pattern, field_names, field_values
                 continue
 
             old_value = groups[value_group_idx]
+            
+            # Hardcode protection for the base template (letterhead address)
+            if "אמירים" in old_value and field_name in ["רחוב", "מיקום", "עיר"]:
+                continue
+
             # Calculate exact position from the regex match group
             value_start = match.start(value_group_idx + 1)  # +1 because groups are 1-indexed in match.start()
             new_value_clean = new_value.rstrip(".")
@@ -533,31 +543,9 @@ def pattern_replace(unpacked_dir, confirmed_fields, extracted_fields=None):
         with open(doc_path, "wb") as f:
             tree.write(f, xml_declaration=True, encoding="UTF-8", standalone=True)
 
-    # ── Process headers/footers (cover page patterns only) ────────────────
-    word_dir = os.path.join(unpacked_dir, "word")
-    header_footer_files = [
-        "header1.xml", "header2.xml", "header3.xml",
-        "footer1.xml", "footer2.xml", "footer3.xml",
-    ]
-
-    for fname in header_footer_files:
-        fpath = os.path.join(word_dir, fname)
-        if not os.path.exists(fpath):
-            continue
-
-        tree = etree.parse(fpath)
-        root = tree.getroot()
-
-        for para in root.iter(f"{W}p"):
-            replaced_fields = set()
-            for pattern, field_names in cover_patterns:
-                _apply_pattern_to_paragraph(
-                    para, pattern, field_names,
-                    confirmed_fields, extracted_fields or {},
-                    counts, replaced_fields
-                )
-
-        with open(fpath, "wb") as f:
-            tree.write(f, xml_declaration=True, encoding="UTF-8", standalone=True)
-
+    # ── Process headers/footers ───────────────────────────────────────────
+    # Per user request, we DO NOT process headers and footers to protect
+    # the basic template (like the company letterhead "רחוב אמירים 14").
+    # The replacement should only happen in the main document body.
+    
     return counts
