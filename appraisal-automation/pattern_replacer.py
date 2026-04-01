@@ -10,6 +10,7 @@ Works at the lxml <w:t> element level to preserve formatting.
 """
 import os
 import re
+import hashlib
 from copy import deepcopy
 from lxml import etree
 
@@ -55,11 +56,12 @@ def _build_cover_patterns():
         # 2. גוש: VALUE — covers both cover page AND section 6 "גוש: 6636."
         (re.compile(r'(גוש\s*:\s*)(' + _VAL + r')'), ["גוש"]),
 
-        # 3. חלקה: VALUE — covers both cover page AND section 6
-        (re.compile(r'(חלקה\s*:\s*)(' + _VAL + r')'), ["חלקה"]),
-
-        # 4. תת חלקה: VALUE — also matches תת-חלקה
+        # 3. תת חלקה: VALUE — MUST come BEFORE חלקה to prevent overlap.
+        #    Also matches תת-חלקה.
         (re.compile(r'(תת[\s\-]חלקה\s*:\s*)(' + _VAL + r')'), ["תת חלקה"]),
+
+        # 4. חלקה: VALUE — negative lookbehind prevents matching inside "תת חלקה:"
+        (re.compile(r'(?<!תת )(?<!תת-)(חלקה\s*:\s*)(' + _VAL + r')'), ["חלקה"]),
 
         # 5. מגרש: VALUE
         (re.compile(r'(מגרש\s*:\s*)(' + _VAL + r')'), ["מגרש"]),
@@ -517,6 +519,10 @@ def pattern_replace(unpacked_dir, confirmed_fields, extracted_fields=None):
     """
     counts = {}
 
+    # ── 🛑 HEADER INTEGRITY: snapshot header hashes BEFORE any work ─────
+    word_dir = os.path.join(unpacked_dir, "word")
+    header_hashes = _snapshot_header_hashes(word_dir)
+
     # Build all pattern groups
     cover_patterns = _build_cover_patterns()
     section6_patterns = _build_section6_patterns()
@@ -553,5 +559,43 @@ def pattern_replace(unpacked_dir, confirmed_fields, extracted_fields=None):
     # Per user request, we DO NOT process headers and footers to protect
     # the basic template (like the company letterhead "רחוב אמירים 14").
     # The replacement should only happen in the main document body.
-    
+
+    # ── 🛑 HEADER INTEGRITY: verify headers were NOT modified ─────────
+    _verify_header_integrity(word_dir, header_hashes)
+
     return counts
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# HEADER INTEGRITY HELPERS
+# ═══════════════════════════════════════════════════════════════════════
+
+def _snapshot_header_hashes(word_dir: str) -> dict[str, str]:
+    """
+    Compute MD5 hashes of all header/footer XML files.
+    Used as a before/after check to ensure they are never modified.
+    """
+    hashes = {}
+    for pattern in ("header", "footer"):
+        for i in range(1, 4):
+            fpath = os.path.join(word_dir, f"{pattern}{i}.xml")
+            if os.path.exists(fpath):
+                hashes[fpath] = hashlib.md5(open(fpath, "rb").read()).hexdigest()
+    return hashes
+
+
+def _verify_header_integrity(word_dir: str, original_hashes: dict[str, str]) -> None:
+    """
+    Verify that header/footer XML files were NOT modified during processing.
+    Raises RuntimeError if any header was changed — this is always a bug.
+    """
+    for fpath, original_hash in original_hashes.items():
+        if not os.path.exists(fpath):
+            continue
+        current_hash = hashlib.md5(open(fpath, "rb").read()).hexdigest()
+        if current_hash != original_hash:
+            fname = os.path.basename(fpath)
+            raise RuntimeError(
+                f"HEADER INTEGRITY VIOLATION: {fname} was modified during "
+                f"pattern_replace(). This is a bug — headers must never be touched."
+            )
