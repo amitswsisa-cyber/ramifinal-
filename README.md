@@ -29,6 +29,12 @@ APP_PASSWORD = "your_chosen_password"
 
 7. Click **Deploy**.
 
+## Recent Improvements (April 2026)
+
+- **Fixed Field Overlap — `תת חלקה`**: Resolved a bug where `חלקה` regex would over-match inside `תת חלקה`, causing duplicated field labels.
+- **Header Integrity Hashing**: Implemented a defense-in-depth security layer that snapshots MD5 hashes of all header/footer XML files. If any header is modified during pattern replacement, the system raises a `RuntimeError` immediately to prevent template corruption.
+- **Improved Regex Accuracy**: Added negative lookbehind to the `חלקה` pattern to ensure strict matching.
+
 ## Local Development
 
 ```bash
